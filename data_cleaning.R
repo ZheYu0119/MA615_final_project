@@ -1,0 +1,2 @@
+library(RDota2)
+key_actions(action = 'register_key', value = '505BF86E799E8BFF0F6ABE51AF4DE887')
