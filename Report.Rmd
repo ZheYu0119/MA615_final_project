@@ -1,0 +1,311 @@
+---
+title: "Report of MA615 Final Assignment"
+author: "Zhe Yu"
+date: "2020/12/14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(shiny)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(magrittr)
+library(stringr)
+library(tidytext)
+data(stop_words)
+library(leaflet)
+library(shinydashboard)
+library(gridExtra)
+library(scales)
+library(tidyr)
+library(wordcloud2)
+library(DT)
+clean_gb <- read_csv("clean_gb.csv")
+indeed <- read_csv("indeed.csv")
+indeed <- indeed[1:770,]
+Encoding(clean_gb$description) <- "UTF-8"
+clean_gb$description <- iconv(x=clean_gb$description,from = "UTF-8",to = "UTF-8",sub = "")
+Encoding(clean_gb$title) <- "UTF-8"
+clean_gb$title <- iconv(x=clean_gb$title,from = "UTF-8",to = "UTF-8",sub = "")
+Encoding(clean_gb$detail) <- "UTF-8"
+clean_gb$detail <- iconv(x=clean_gb$detail,from = "UTF-8",to = "UTF-8",sub = "")
+```
+
+## Data Collection
+
+I use two ways to collect data: (a)use API key and `Jsonlite` package to download job data from [Adzuna](https://www.adzuna.com.au/); (b)use `rvest` package to capture data from source code of [Indeed](https://nz.indeed.com/).
+
+```{r eval=FALSE}
+#(a) using API
+gb <- data.frame()#create a blank data frame
+for(i in 1:100){
+  file <- jsonlite::fromJSON(paste0("https://api.adzuna.com/v1/api/jobs/gb/search/",i,"?app_id=f0c87e31&app_key=84f049d50dd8aa26e2e48aff8ba0e61f&results_per_page=50&what_or=data%20scientist%20statistician"))
+  df_new <- file$results 
+  gb <- bind_rows(gb,df_new)
+}# using loop to download data in different pages
+#cause the description is only a summary so I also use rvest to get the full information
+for (i in (1:length(gb$redirect_url))){
+  detail <- tryCatch(
+    html_text(html_node(read_html(as.character(gb$redirect_url[i])),'.job_details_body')),
+    error=function(e){NA}
+  )
+  if (is.null(detail)){
+    desc <- NA
+  }
+  gb$detail[i] <- detail
+}
+
+#(b)using rvest
+listings <- data.frame(title=character(),
+                       company=character(), 
+                       location=character(), 
+                       summary=character(), 
+                       link=character(), 
+                       description = character(),
+                       stringsAsFactors=FALSE) #create empty data frame
+for (i in seq(0, 1000, 10)){
+  url_ds <- paste0('https://www.indeed.com/jobs?q=data+scientist&l=all&start=',i)
+  var <- read_html(url_ds)
+
+  
+  #job title
+  title <-  var %>% 
+    html_nodes('#resultsCol .jobtitle') %>%
+    html_text() %>%
+    str_extract("(\\w+.+)+") 
+  
+  #company
+  company <- var %>% 
+    html_nodes('#resultsCol .company') %>%
+    html_text() %>%
+    str_extract("(\\w+).+") 
+  
+  #location
+  location <- var %>%
+    html_nodes('#resultsCol .location') %>%
+    html_text() %>%
+    str_extract("(\\w+.)+,.[A-Z]{2}")   
+  #summary
+  summary <- var %>%
+    html_nodes('#resultsCol .summary') %>%
+    html_text() %>%
+    str_extract(".+")
+  
+  #link
+  link <- var %>%
+    html_nodes('#resultsCol .jobtitle .turnstileLink, #resultsCol a.jobtitle') %>%
+    html_attr('href') 
+  link <- paste0("https://www.indeed.com",link)
+  
+  listings <- rbind(listings, as.data.frame(cbind(title,
+                                                  company,
+                                                  location,
+                                                  summary,
+                                                  link)))
+}
+for (i in (1:length(listings$link))){
+  desciption <- tryCatch(
+    html_text(html_node(read_html(as.character(listings$link[i])),'.jobsearch-JobComponent-description')),
+    error=function(e){NA}
+  )
+  if (is.null(desciption)){
+    desc <- NA
+  }
+  listings$description[i] <- desciption
+}
+```
+
+## Data Cleaning
+
+I filter out rows without longitude and latitude and without salary information And than select the vaiables that is useful. Since area information is contained in vectors so I use `separate` function to clean them into for columns: Country, State, County and city. Also in description and title there are some HTML tags, I use `str_replace_all` to replace them.
+
+```{r, eval=FALSE}
+full %<>% filter(is.na(longitude)==F) %<>% filter(is.na(latitude)==F)
+With_salary <- full %>% filter(is.na(salary_max)==F) %<>% filter(is.na(salary_min)==F)
+
+full %<>% select(c("id","title","description","tag","label","area","location_name","latitude","longitude","salary_min","salary_max"))
+
+# clean area
+clean_1 <- full  %>% separate(area,into = c("country","state","county","city"),sep=",")
+clean_1 %<>% separate(country,into = c("de1","country","de2"),sep = '"')
+clean_1 %<>% separate(state,into = c("de3","state","de4"),sep = '"')
+clean_1 %<>% separate(county,into = c("de5","county","de6"),sep = '"')
+clean_1 %<>% separate(city,into = c("de5","city","de6"),sep = '"')
+clean_1 %<>% select(-c("de1","de2","de3","de4","de5","de6"))
+
+# clean title and description
+clean_1$title <- str_replace_all(clean_1$title, "<strong>","")
+clean_1$title <- str_replace_all(clean_1$title, "</strong>","")
+clean_1$description <- str_replace_all(clean_1$description, "<strong>","")
+clean_1$description <- str_replace_all(clean_1$description, "</strong>","")
+```
+
+To make sure that all the information in data frame is UTF-8 encoding.
+
+```{r eval=FALSE}
+Encoding(clean_gb$description) <- "UTF-8"
+clean_gb$description <- iconv(x=clean_gb$description,from = "UTF-8",to = "UTF-8",sub = "")
+Encoding(clean_gb$title) <- "UTF-8"
+clean_gb$title <- iconv(x=clean_gb$title,from = "UTF-8",to = "UTF-8",sub = "")
+Encoding(clean_gb$detail) <- "UTF-8"
+clean_gb$detail <- iconv(x=clean_gb$detail,from = "UTF-8",to = "UTF-8",sub = "")
+```
+
+## Mapping
+
+In Adzuna data, there are longitudes and latitudes indicate the specific location of workplace, so I use `Leaflet` to draw them on the maps. Circles with gather together if you narrow the map. And if can show more information if you can enlarge the map and click those circles. And also, I show the salary information in this map, the deep the color, the higher the salary.(Since only jobs in UK shows the salary information, so I will focus on UK in this assignment.)
+```{r echo=FALSE}
+pop_gb <- paste("<strong>Job title</strong>: ",clean_gb$title,"<br/>",
+                   "<strong>Salary</strong> :",clean_gb$salary_min,"~",clean_gb$salary_max,"<br/>",
+                    "<strong>Summary</strong>: ",clean_gb$description)
+cPal <- colorNumeric(palette = "Oranges",domain=clean_gb$salary_max)
+leaflet(clean_gb) %>% addTiles() %>%
+        addCircleMarkers(data=clean_gb,lng=~longitude,
+                         lat=~latitude,
+                         clusterOptions = markerClusterOptions(),
+                         popup = pop_gb,
+                         fillColor = ~cPal(clean_gb$salary_max),
+                         stroke = FALSE,fillOpacity = 0.9)%>%
+        addLegend("bottomright", pal = cPal, values = ~salary_max,title = "salary ",opacity = 1)
+```
+
+## Text Mining
+
+### Adzuna vs Indeed
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# adzuna vs indeed
+tidygb_desc <- clean_gb[,c(1,15)] %>%
+  unnest_tokens(word, detail)
+
+tidygb_desc <- tidygb_desc %>%
+  anti_join(stop_words) #%>% filter(!(word %in% c("data","scientist","de","und","en","di","scientists","science","la","je","als","des","du","een","der","le","00e4")))
+
+adzuna_text <- tidygb_desc %>% filter(word!="data") %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 530) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word),height=650) +
+  geom_col(fill="darkseagreen") +
+  labs(y = NULL,title = "Description in Adzuna")+
+  theme(axis.text.y=element_text(size=12))
+
+tidyin_desc <- indeed[,c(1,6)] %>%
+  unnest_tokens(word, description)
+
+tidyin_desc <- tidyin_desc %>%
+  anti_join(stop_words) #%>% filter(!(word %in% c("data","scientist","de","und","en","di","scientists","science","la","je","als","des","du","een","der","le","00e4")))
+
+indeed_text <- tidyin_desc %>% filter(word!="data") %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 600) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word),height=650) +
+  geom_col(fill="darkorange2") +
+  labs(y = NULL,title = "Description in Indeed")+
+  theme(axis.text.y=element_text(size=12))
+  
+a_vs_i <- grid.arrange(adzuna_text,indeed_text,nrow=1)
+
+tidygb_desc %>% count(word, sort = T)
+tidyin_desc %>% count(word, sort = T)
+
+frequency <- bind_rows(mutate(tidygb_desc, author = "Adzuna"),
+                       mutate(tidyin_desc, author = "Indeed")) %>% 
+  mutate(word = str_extract(word, "[a-z']+")) %>%
+  count(author, word) %>%
+  group_by(author) %>%
+  mutate(proportion = n / sum(n)) %>% 
+  select(-n) %>% 
+  spread(author, proportion) %>% 
+  gather(author, proportion, Indeed)
+
+ggplot(frequency, aes(x = proportion, y = Adzuna, 
+                      color = abs(Adzuna - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), 
+                       low = "darkslategray4", high = "gray75") +
+  facet_wrap(~author, ncol = 2) +
+  theme(legend.position="none") +
+  labs(y = "Adzuna", x = NULL)
+```
+
+Comparing the count of words in two website, they are almost the same. Words like 'experience', 'team', 'skills' are all have high frequency in both two websites. And we can see that python and machine learning are always mentioned so they are really important skills. In frequency plot, in Adzuna, 'UK' and 'London' are frequently mentioned cause jobs in that data is all from UK, so it makes sense. And also 'modeling' is mentioned more in Indeed. 
+
+### Job Description in different salary level
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# salary vs text
+labels <- c("(0,35000]","(35000,45000]","(45000,60000]","(60000,216000]")
+breaks <- c(-1,35000,45000,60000,216000)
+clean_gb$salary_label <- cut(clean_gb$salary_max,breaks,labels)
+tidy_salary <- clean_gb[,c(16,15)] %>% 
+  unnest_tokens(word, detail) %>%anti_join(stop_words) %>%
+  group_by(salary_label,word) %>% summarise(count=n())
+
+tidy_salary %>% filter(word!="data") %>%
+  filter(count > 150) %>%
+  ggplot(aes(count, word) ) +
+  geom_col(fill="darkseagreen") +
+  labs(y = NULL,title = "Description in Adzuna")+
+  theme(axis.text.y=element_text(size=6))+
+  facet_grid(~salary_label)
+
+frequency_2 <- tidy_salary %>%
+  group_by(salary_label)  %>%
+  mutate(proportion = count / sum(count)) %>% 
+  select(-count) %>% 
+  spread(salary_label, proportion) %>% 
+  gather(salary_label, proportion,"(35000,45000]":"(60000,216000]")
+
+ggplot(frequency_2, aes(x = proportion, y = `(0,35000]`, 
+                           color = abs(`(0,35000]` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), 
+                       low = "darkslategray4", high = "gray75") +
+  facet_wrap(~salary_label, ncol = 3) +
+  theme(legend.position="none") +
+  labs(y = "(0,35000]", x = NULL)
+```
+
+It is clear that in different level of salary, the distribution of words are almost the same but in some group there are some words not mentioned, it may because the number of jobs is small in that group. But also may because they are not important in that level. In frequency plot, it looks almost the same for each level. But it is obvious that 'graduates' are mentioned more in level (0,35000].
+
+### Job Description in different location
+
+```{r echo=FALSE, fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
+# different location
+tidy_location <- clean_gb[,c(7,15)] %>% 
+  unnest_tokens(word, detail) %>%anti_join(stop_words) %>%
+  group_by(state,word) %>% summarise(count=n())
+tidy_location %>% filter(word!="data")
+frequency_3 <- tidy_location %>%
+  group_by(state)  %>%
+  mutate(proportion = count / sum(count)) %>% 
+  select(-count) %>% 
+  spread(state, proportion) %>% 
+  gather(state, proportion,"Eastern England":"Yorkshire And The Humber")
+
+ggplot(frequency_3, aes(x = proportion, y = `East Midlands`, 
+                             color = abs(`East Midlands` - proportion))) +
+  geom_abline(color = "gray40", lty = 2) +
+  geom_jitter(alpha = 0.1, size = 2.5, width = 0.3, height = 0.3) +
+  geom_text(aes(label = word), check_overlap = TRUE, vjust = 1.5) +
+  scale_x_log10(labels = percent_format()) +
+  scale_y_log10(labels = percent_format()) +
+  scale_color_gradient(limits = c(0, 0.001), 
+                       low = "darkslategray4", high = "gray75") +
+  facet_wrap(~state, ncol = 3) +
+  theme(legend.position="none") +
+  labs(y = "East Midlands", x = NULL)
+```
+It is hard to have some conclusion from this plot, but London is obviously different cause majority of jobs are in London; And in Yorkshire And The Humber, 'financial' is mentioned more than it in East Midlands.

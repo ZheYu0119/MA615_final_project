@@ -1,0 +1,12 @@
+name: jobs
+title: jobs
+username:
+account: yuzhe
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 3394997
+bundleId: 3987575
+url: https://yuzhe.shinyapps.io/jobs/
+when: 1607962042.46937
+asMultiple: FALSE
+asStatic: FALSE
