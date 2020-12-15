@@ -1,4 +1,5 @@
 # MA615_final_project
+Sorry for that I can't upload my shinyapp on bu server, so I publish it on shinyapp.io, here is the url:   
 Shiny app: https://yuzhe.shinyapps.io/jobs/    
 Report: https://zheyu0119.github.io/MA615_final_project/Report.html    
 Codes of shiny in `jobs` document;    
